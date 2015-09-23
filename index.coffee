@@ -1,5 +1,7 @@
-chalk = require("chalk")
-util = require("util")
+# chalk = require("chalk")
+# util = require("util")
+
+debug = false
 
 # match transitions from a and b:
 # 1) char and char -> char
@@ -92,7 +94,7 @@ compileFragment = (nfa, pattern, curr = null) ->
     ch = pattern[i]
     next = null
 
-    # console.log ch
+    console.log ch if debug
 
     switch ch
       when "{"
@@ -196,16 +198,16 @@ mergeEpsStates = (nfa) ->
   # collect groups of epsilon states
   eachTransition nfa, (state, input, to_state) ->
     if input == ""
-      console.log "blank", state, "->", to_state
+      console.log "blank", state, "->", to_state if debug
       state = findFirst(state)
       if merge[to_state]
-        console.log "already merging", state, "to", merge[to_state]
+        console.log "already merging", state, "to", merge[to_state] if debug
         if state != merge[to_state]
           merge[state] = merge[to_state]
       else
         merge[to_state] = state
 
-  console.log "merge", merge
+  console.log "merge", merge if debug
 
   # copy over all transitions
   eachTransition nfa, (state, input, to_state) ->
@@ -213,7 +215,7 @@ mergeEpsStates = (nfa) ->
       if merge[state] or merge[to_state]
         state = merge[state] || state
         to_state = merge[to_state] || to_state
-        console.log "copy", {state, input, to_state}
+        console.log "copy", {state, input, to_state} if debug
         addTransition(nfa, state, input, to_state)
 
   # remove transtions and targets
@@ -241,7 +243,7 @@ NFA = (pattern) ->
   @accept = {}
   @transitions = {}
 
-  if pattern
+  if pattern?
     last = compileFragment(@, pattern)
     @accept[last] = true
 
@@ -253,132 +255,150 @@ clone = (object) ->
     ret[key] = object[key]
   ret
 
+hasMultipleTransitionsTo = (nfa, state, inverse) ->
+  from_states = Object.keys(inverse[state] || {})
+
+  if not from_states? or from_states.length == 0
+    return false
+
+  if from_states.length > 1
+    return true
+
+  count = 0
+
+  for input, to_states of nfa.transitions[from_states[0]]
+    if to_states[state]
+      count++
+
+  return count > 1
+
+
+REST_MISMATCH = new Error("mismatched rest segments")
+
+to_glob_helper = (nfa, inverse, match_brackets = true) ->
+
+  cache = {}
+  states = Object.keys(nfa.accept)
+
+  for state in states
+    cache[state] = ""
+
+  while states.length > 0
+    state = states.shift()
+
+    console.log new Array(40).join("=") if debug
+    console.log "looking at", chalk.red(state) if debug
+
+    patterns = []
+
+    for input of nfa.transitions[state]
+      continue if input.length != 1
+      console.log "considering", {input} if debug
+
+      for to_state of nfa.transitions[state][input]
+        # ignore self transitions for the moment since we only
+        # support * and not + so far.
+        if to_state == state
+          continue
+
+        if not cache[to_state]
+          throw new Error("no cache for to_state: #{to_state}")
+        for pat in cache[to_state]
+          patterns.push input + pat
+
+    if patterns.length > 1 and match_brackets
+      # we just got multiple patterns. find the nearest parent state for both
+      # and use the {x,y} syntax to compress the pattern.
+      console.log chalk.yellow("this has multiple patterns"), patterns if debug
+
+      rest = {}
+
+      sub_patterns = patterns.map (pat) ->
+        sub = splitBrackets(pat, -1)
+        rest[pat.substring(sub.closing_offset+1)] = true
+        return sub[0]
+
+      rest = Object.keys(rest)
+
+      # in case the ends are mismatched, assume that this glob doesn't have a compact
+      # representation and retry without adding brackets
+      if rest.length > 1
+        throw REST_MISMATCH
+
+      patterns.splice(0)
+      patterns[0] = "{" + sub_patterns.join(",") + "}" + rest
+
+    if patterns.length == 0
+      patterns.push("")
+
+    if nfa.transitions[state]?[".*"]?[state]
+      console.log "self * transition" if debug
+      patterns = patterns.map (pat) -> "*" + pat
+
+    console.log "after processing", {state, patterns} if debug
+
+    if inverse[state] and match_brackets
+      if hasMultipleTransitionsTo(nfa, state, inverse)
+        console.log chalk.yellow("state has multiple incoming"), Object.keys(inverse[state]) if debug
+        patterns[0] = "}" + patterns[0]
+
+    cache[state] = patterns
+
+    for from_state of inverse[state]
+      states.push(from_state) unless (from_state in states) or from_state == state
+
+  final = cache["0:0"]
+
+  if final.length > 1
+    "{" + final.join(",") + "}"
+  else
+    final[0]
+
+# generate the glob expression
 toGlob = (nfa) ->
 
   inverse = inverseTransitions(nfa)
-  console.log "inverse", inverse
+  # remove self transitions from the index
+  for state of inverse
+    delete inverse[state][state]
 
-  cache = {}
-  patterns = {}
-  states = []
-  visited = {}
+  console.log "inverse", inverse if debug
 
-  for state of nfa.accept
-    cache[state] = [""]
-    states.push(state)
+  try
+    result = to_glob_helper(nfa, inverse)
+  catch e
+    if e == REST_MISMATCH
+      # without trying to match brackets
+      console.log chalk.magenta("retrying due to rest mismatch") if debug
+      result = to_glob_helper(nfa, inverse, false)
+    else
+      console.log "got some strange error" if debug
+      throw e
 
-  while states.length > 0
-    state = states.pop()
-    visited[state] = true
+  console.log "the final", result if debug
 
-    console.log chalk.cyan("processing state"), state
-
-    if inverse[state]
-      console.log "states leading to this", inverse[state]
-      for from_state of inverse[state]
-        continue if cache[from_state]
-        prefixes = []
-
-        for input, to_states of nfa.transitions[from_state]
-          if to_states[state]
-            console.log "input", {from_state, state, input}
-
-            for prefix in cache[state]
-              prefixes.push(input + prefix)
-
-        states.push(from_state) unless state == from_state
-
-        console.log "state", from_state, "prefixes are", prefixes
-        cache[from_state] = prefixes
-
-  console.log cache
-  # iterate = (state, pattern) ->
-    # console.log "iterate", {state, pattern, last}
-
-    # if nfa.accept[state]
-    #   console.log "accepting", pattern
-    #   patterns[pattern] = true
-
-    # if nfa.transitions[state]
-
-    #   cycle = state == last
-
-    #   console.log "cycle", cycle
-
-    #   if not visited[state] or cycle
-    #     visited[state] = true
-
-    #     if depth++ > 10
-    #       throw new Error("iteration limit")
-
-    #     for input in order
-    #       if to_states = nfa.transitions[state][input]
-    #         for to_state of to_states
-    #           console.log "order iterate", input, to_state
-    #           if not cycle or to_state != state
-    #             iterate(to_state, pattern + input, clone(visited), state)
-
-    #     for input, to_states of nfa.transitions[state]
-    #       if not input in order
-    #         for to_state of to_states
-    #           console.log "other iterate", input, to_state
-    #           if not cycle or to_state != state
-    #             iterate(to_state, pattern + input, clone(visited), state)
-
-  # iterate("0:0", "")
-
-  # patterns = Object.keys(patterns)
-
-  # if patterns.length > 1
-  #   "{" + patterns.join(",") + "}"
-  # else if patterns.length == 1
-  #   patterns[0]
-  # else
-  #   ""
-
-  # str = []
-  # curr = 0
-
-  # loop
-  #   if not @transitions[curr]
-  #     break
-
-  #   inputs = Object.keys(@transitions[curr])
-
-  #   if inputs.length == 0
-  #     break
-
-  #   if inputs[0] == ".*"
-  #     str.push "*"
-  #     input = ""
-  #   else
-  #     input = inputs[0]
-  #     str.push input
-
-  #   curr = @transitions[curr][input]
-
-  # return str.join("")
-
-# toCacheKey = (a_states, b_states) ->
-#   Object.keys(a_states).sort().join() + "|" + Object.keys(b_states).sort()
+  return result
 
 intersect = (anfa, bnfa) ->
-  console.log "intersecting"
-  console.log util.inspect(anfa, false, null)
-  console.log util.inspect(bnfa, false, null)
+  console.log "intersecting" if debug
+  console.log util.inspect(anfa, false, null) if debug
+  console.log util.inspect(bnfa, false, null) if debug
 
   nfa = new NFA()
 
   for i in [0..anfa.sid]
     for j in [0..bnfa.sid]
 
+      console.log "constructing #{i}:#{j}" if debug
+
       # if one of the states has an ε transition, allow the nfa to transition between the compund states
       if (a_eps = anfa.transitions[i]?[""]) or (b_eps = bnfa.transitions[j]?[""])
+        console.log {a_eps, b_eps} if debug
         if a_eps and not b_eps
           for to_state of a_eps
             addTransition(nfa, "#{i}:#{j}", "", "#{to_state}:#{j}")
         else if not a_eps and b_eps
-          for to_state of a_eps
+          for to_state of b_eps
             addTransition(nfa, "#{i}:#{j}", "", "#{j}:#{to_state}")
 
       for [a_input, b_input, ab_input] in matchTransitions(anfa.transitions[i], bnfa.transitions[j])
@@ -388,6 +408,8 @@ intersect = (anfa, bnfa) ->
   for a of anfa.accept
     for b of bnfa.accept
       nfa.accept["#{a}:#{b}"] = true
+
+  console.log util.inspect(nfa, false, null) if debug
 
   # list all states reachable from 0:0
   forward = reachFrom(nfa, "0:0")
@@ -409,7 +431,7 @@ intersect = (anfa, bnfa) ->
     if not keep_state or not keep_to
       removeTransition(nfa, state, input, to_state)
 
-  console.log util.inspect(nfa, false, null)
+  console.log util.inspect(nfa, false, null) if debug
 
   mergeEpsStates(nfa)
 
@@ -419,8 +441,11 @@ module.exports = (apat, bpat) ->
 
   anfa = new NFA(apat)
   bnfa = new NFA(bpat)
+  nfa = intersect(anfa, bnfa)
 
-  if nfa = intersect(anfa, bnfa)
-    console.log util.inspect(nfa, false, null)
+  console.log util.inspect(nfa, false, null) if debug
+
+  if nfa
+    return toGlob(nfa)
   else
     return false

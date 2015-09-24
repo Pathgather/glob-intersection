@@ -1,4 +1,3 @@
-chalk = require("chalk")
 util = require("util")
 
 debug = false
@@ -130,9 +129,6 @@ compileFragment = (nfa, pattern, curr = null) ->
         next = nfa.sid++
         addTransition(nfa, curr, ch, next)
 
-    # add an epsilon transition to the same state to help with intersection later
-    # addTransition(nfa, curr, "", curr)
-
     if next
       curr = next
     else
@@ -246,30 +242,6 @@ NFA = (pattern) ->
 
   return
 
-clone = (object) ->
-  ret = {}
-  for key of object
-    ret[key] = object[key]
-  ret
-
-hasMultipleTransitionsTo = (nfa, state, inverse) ->
-  from_states = Object.keys(inverse[state] || {})
-
-  if not from_states? or from_states.length == 0
-    return false
-
-  if from_states.length > 1
-    return true
-
-  count = 0
-
-  for input, to_states of nfa.transitions[from_states[0]]
-    if to_states[state]
-      count++
-
-  return count > 1
-
-
 REST_MISMATCH = new Error("mismatched rest segments")
 
 to_glob_helper = (nfa, inverse, match_brackets = true) ->
@@ -282,7 +254,7 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
 
   process_state = (state) ->
     console.log new Array(40).join("=") if debug
-    console.log "looking at", chalk.red(state) if debug
+    console.log "looking at", state if debug
 
     patterns = []
 
@@ -318,7 +290,7 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     if patterns.length > 1 and match_brackets
       # we just got multiple patterns. find the nearest parent state for both
       # and use the {x,y} syntax to compress the pattern.
-      console.log chalk.yellow("this has multiple patterns"), patterns if debug
+      console.log "this has multiple patterns", patterns if debug
 
       suffix = findSuffix(patterns)
 
@@ -333,13 +305,6 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     if nfa.transitions[state]?[".*"]?[state]
       console.log "self * transition" if debug
       patterns = patterns.map (pat) -> "*" + pat
-
-    console.log "after processing", {state, patterns} if debug
-
-    # if inverse[state] and match_brackets
-    #   if hasMultipleTransitionsTo(nfa, state, inverse)
-    #     console.log chalk.yellow("state has multiple incoming"), Object.keys(inverse[state]) if debug
-    #     patterns[0] = "}" + patterns[0]
 
     console.log "saving cache for #{state}", patterns if debug
     cache[state] = patterns
@@ -377,7 +342,7 @@ toGlob = (nfa) ->
   catch e
     if e == REST_MISMATCH
       # without trying to match brackets
-      console.log chalk.magenta("retrying due to rest mismatch") if debug
+      console.log "retrying due to rest mismatch" if debug
       result = to_glob_helper(nfa, inverse, false)
     else
       console.log "got some strange error" if debug
@@ -407,15 +372,15 @@ intersect = (anfa, bnfa) ->
   for i in [0..anfa.sid]
     for j in [0..bnfa.sid]
 
-      console.log chalk.cyan("processing: #{i}:#{j}") if debug
+      console.log "processing: #{i}:#{j}" if debug
 
       # if one of the states has an ε transition, allow the nfa to transition between the compund states
       addEpsilonTransitions(nfa, i, j, anfa.transitions[i]?[""], bnfa.transitions[j]?[""])
 
       for [a_input, b_input, ab_input] in matchTransitions(anfa.transitions[i], bnfa.transitions[j])
-        console.log chalk.cyan("matched #{a_input} and #{b_input} as #{ab_input}") if debug
+        console.log "matched #{a_input} and #{b_input} as #{ab_input}" if debug
         for [a, b] in stateProduct(anfa.transitions[i][a_input], bnfa.transitions[j][b_input])
-          console.log chalk.cyan("adding transition from #{i}:#{j} with '#{ab_input}' to #{a}:#{b}") if debug
+          console.log "adding transition from #{i}:#{j} with '#{ab_input}' to #{a}:#{b}" if debug
           addTransition(nfa, "#{i}:#{j}", ab_input, "#{a}:#{b}")
 
   for a of anfa.accept
@@ -457,9 +422,6 @@ intersect = (anfa, bnfa) ->
 
   console.log util.inspect(nfa, false, null) if debug
 
-  # mergeEpsStates(nfa)
-  # assertNoEpsStates(nfa)
-
   return nfa
 
 module.exports = (apat, bpat, options = {}) ->
@@ -473,7 +435,7 @@ module.exports = (apat, bpat, options = {}) ->
     bnfa = new NFA(bpat)
     nfa = intersect(anfa, bnfa)
 
-    console.log chalk.green("intersection"), util.inspect(nfa, false, null) if debug
+    console.log "intersection", util.inspect(nfa, false, null) if debug
 
     glob = toGlob(nfa) if nfa
 

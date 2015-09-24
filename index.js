@@ -360,6 +360,9 @@
           console.log("this has multiple patterns", patterns);
         }
         suffix = findSuffix(patterns);
+        while (suffix[0] === "}") {
+          suffix = suffix.substring(1);
+        }
         if (debug) {
           console.log({
             suffix: suffix

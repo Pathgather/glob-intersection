@@ -294,6 +294,10 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
 
       suffix = findSuffix(patterns)
 
+      # roll back to the first non } character. otherwise, the {} will be mismatched.
+      while suffix[0] == "}"
+        suffix = suffix.substring(1)
+
       console.log {suffix} if debug
 
       sub_patterns = patterns.map (pat) -> pat.substring(0, pat.length - suffix.length)

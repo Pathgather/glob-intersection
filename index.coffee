@@ -13,7 +13,7 @@ matchInput = (a, b) ->
   switch
     when a == b and a != ""
       a
-    when a == ".*" and b.length == 1
+    when a == ".*" and b.length == 1 and b != "/"
       b
 
 matchTransitions = (atr, btr) ->

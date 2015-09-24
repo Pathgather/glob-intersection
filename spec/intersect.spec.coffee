@@ -2,7 +2,7 @@ m = require("../index")
 
 tests = [
 
-  # basic patterns
+  # basic glob patterns
   ["", "", ""]
   ["", "*", ""]
   ["a", "", false]
@@ -20,6 +20,13 @@ tests = [
   ["a*b", "ab", "ab"]
   ["a*b", "a*", "a*b"]
   ["a*b", "ab", "ab"]
+
+  # basic glob patterns with /
+  ["/", "*", false]
+  ["a/", "*", false]
+  ["/*", "/a", "/a"]
+  ["/hello/*", "/*/world", "/hello/world"]
+  ["/hello/*/*", "/*/world/*", "/hello/world/*"]
 
   # bracket patterns
   ["{a,b,c}", "a", "a"]

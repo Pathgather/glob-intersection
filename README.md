@@ -1,3 +1,4 @@
+![npm](https://img.shields.io/npm/v/glob-intersection.svg)
 ![build](https://img.shields.io/circleci/project/Pathgather/glob-intersection/master.svg)
 ![dependencies](https://img.shields.io/david/Pathgather/glob-intersection.svg)
 ![devDependencies](https://img.shields.io/david/dev/Pathgather/glob-intersection.svg)

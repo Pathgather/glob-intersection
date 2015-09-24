@@ -343,15 +343,15 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     state = states.shift()
     process_state(state)
 
-  final = cache[nfa.start]
+  result = cache[nfa.start]
 
-  if not final?
+  if not result?
     throw new Error("missing cache for start state")
 
-  if final.length > 1
-    "{" + final.join(",") + "}"
+  if result.length > 1
+    "{" + result.join(",") + "}"
   else
-    final[0]
+    result[0]
 
 # generate the glob expression
 toGlob = (nfa) ->
@@ -453,15 +453,25 @@ intersect = (anfa, bnfa) ->
 
   return nfa
 
-module.exports = (apat, bpat) ->
+module.exports = (apat, bpat, options = {}) ->
 
-  anfa = new NFA(apat)
-  bnfa = new NFA(bpat)
-  nfa = intersect(anfa, bnfa)
+  if options.debug
+    debug = true
 
-  console.log chalk.green("intersection"), util.inspect(nfa, false, null) if debug
+  try
 
-  if nfa
-    return toGlob(nfa)
+    anfa = new NFA(apat)
+    bnfa = new NFA(bpat)
+    nfa = intersect(anfa, bnfa)
+
+    console.log chalk.green("intersection"), util.inspect(nfa, false, null) if debug
+
+    glob = toGlob(nfa) if nfa
+
+  finally
+    debug = false
+
+  if glob?
+    return glob
   else
     return false

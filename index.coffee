@@ -3,16 +3,16 @@ util = require("util")
 
 debug = false
 
-# match transitions from a and b:
-# 1) char and char -> char
-# 4) char and "" -> char
-# 2) glob and char -> char
-# 3) glob and "" -> glob
-# 4) ""   and "" -> ""
+# find the least specific common pattern between a and b
+# single length characters are literal inputs.
 matchInput = (a, b) ->
   switch
     when a == b and a != ""
       a
+    when a == "**" and b == ".*"
+      b
+    when a == "**" and b.length == 1
+      b
     when a == ".*" and b.length == 1 and b != "/"
       b
 
@@ -111,7 +111,14 @@ compileFragment = (nfa, pattern, curr = null) ->
 
       when "*"
         next = nfa.sid++
-        addTransition(nfa, curr, ".*", curr)
+
+        # check if this is a globstar
+        if pattern[i+1] == "*"
+          addTransition(nfa, curr, "**", curr)
+          i++
+        else
+          addTransition(nfa, curr, ".*", curr)
+
         addTransition(nfa, curr, "", next)
 
       when "?"

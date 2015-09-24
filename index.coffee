@@ -114,6 +114,10 @@ compileFragment = (nfa, pattern, curr = null) ->
         addTransition(nfa, curr, ".*", curr)
         addTransition(nfa, curr, "", next)
 
+      when "?"
+        next = nfa.sid++
+        addTransition(nfa, curr, ".*", next)
+
       else
         # it's a literal character
         next = nfa.sid++
@@ -276,7 +280,7 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     patterns = []
 
     for input of nfa.transitions[state]
-      if input.length != 1 and input != ""
+      if input.length != 1 and input != "" and input != ".*"
         continue
 
       console.log "considering", {input, patterns} if debug
@@ -295,12 +299,10 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
           states.push(to_state) unless to_state in states
           states.push(state)
           return
-          # if to_state in states
-            # this state must not have been processed, move this state to the end of the queue
-          #   console.log "no cache entry for #{to_state}, trying to delay #{state}"
-          #   return states.push(state)
-          # else
-          #   throw new Error("no cache entry for #{to_state} and one is not being processed")
+
+        # a transition to the next state that matches any character (not /) is ?
+        if input == ".*"
+          input = "?"
 
         for pat in cache[to_state]
           new_pat = input + pat

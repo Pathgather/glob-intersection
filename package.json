@@ -1,10 +1,11 @@
 {
   "name": "glob-intersect",
   "version": "0.1.0",
-  "description": "Find intersection of two glob patterns",
-  "main": "index.coffee",
+  "description": "Find the intersection of two glob patterns",
+  "main": "index.js",
   "scripts": {
-    "test": "coffee jasmine.coffee"
+    "test": "coffee jasmine.coffee",
+    "build": "coffee -c index.coffee"
   },
   "author": "Guntars Asmanis-Graham",
   "license": "ISC",

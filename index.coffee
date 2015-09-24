@@ -1,5 +1,5 @@
-# chalk = require("chalk")
-# util = require("util")
+chalk = require("chalk")
+util = require("util")
 
 debug = false
 
@@ -9,6 +9,13 @@ debug = false
 # 2) glob and char -> char
 # 3) glob and "" -> glob
 # 4) ""   and "" -> ""
+matchInput = (a, b) ->
+  switch
+    when a == b and a != ""
+      a
+    when a == ".*" and b.length == 1
+      b
+
 matchTransitions = (atr, btr) ->
   matches = []
 
@@ -17,17 +24,9 @@ matchTransitions = (atr, btr) ->
 
   for a of atr
     for b of btr
-      ab = null
-
-      ab = switch
-        when a == b
-          ab = a
-        when (a == ".*" || a == "") and (b.length == 1 || b == "")
-          ab = b
-        when (a.length == 1 || b == "") and (b == ".*" || b == "")
-          ab = a
-
-      if ab?
+      if ab = matchInput(a, b)
+        matches.push([a, b, ab])
+      else if ab = matchInput(b, a)
         matches.push([a, b, ab])
 
   return matches
@@ -93,8 +92,6 @@ compileFragment = (nfa, pattern, curr = null) ->
   while i < pattern.length
     ch = pattern[i]
     next = null
-
-    console.log ch if debug
 
     switch ch
       when "{"
@@ -183,51 +180,10 @@ reachAccept = (nfa) ->
 
   visited
 
-# merge all state groups that are connected via an epsilon state
-# into the first state that was added. this essentially converts
-# the automata to a DFA.
-mergeEpsStates = (nfa) ->
-  merge = {}
-
-  findFirst = (state) ->
-    if merge[state]
-      findFirst(merge[state])
-    else
-      state
-
-  # collect groups of epsilon states
-  eachTransition nfa, (state, input, to_state) ->
+assertNoEpsStates = (nfa) ->
+  eachTransition nfa, (from, input, to) ->
     if input == ""
-      console.log "blank", state, "->", to_state if debug
-      state = findFirst(state)
-      if merge[to_state]
-        console.log "already merging", state, "to", merge[to_state] if debug
-        if state != merge[to_state]
-          merge[state] = merge[to_state]
-      else
-        merge[to_state] = state
-
-  console.log "merge", merge if debug
-
-  # copy over all transitions
-  eachTransition nfa, (state, input, to_state) ->
-    if input != ""
-      if merge[state] or merge[to_state]
-        state = merge[state] || state
-        to_state = merge[to_state] || to_state
-        console.log "copy", {state, input, to_state} if debug
-        addTransition(nfa, state, input, to_state)
-
-  # remove transtions and targets
-  eachTransition nfa, (state, input, to_state) ->
-    if merge[to_state] or merge[state]
-      removeTransition(nfa, state, input, to_state)
-
-  # update accept states
-  for state of nfa.accept
-    if merge[state]
-      nfa.accept[merge[state]] = true
-      delete nfa.accept[state]
+      throw new Error("assertion failed: nfa has epsilon states")
 
 stateProduct = (a_states, b_states) ->
   states = []
@@ -238,9 +194,39 @@ stateProduct = (a_states, b_states) ->
 
   return states
 
+# find the longest shared suffix in patterns
+findSuffix = (patterns) ->
+  first = patterns[0]
+  if patterns.length == 1
+    return first
+
+  shortest = patterns.map((pat) -> pat.length).sort()[0] || 0
+  i = 0
+
+  console.log {shortest} if debug
+
+  while i <= shortest
+    ch = first[first.length-i-1]
+
+    console.log {ch} if debug
+
+    for pat in patterns
+      console.log "looking at", pat[pat.length-i-1] if debug
+      if pat[pat.length-i-1] != ch
+        done = true
+        break
+
+    if done
+      break
+    else
+      i++
+
+  return first.substring(first.length - i)
+
 NFA = (pattern) ->
-  @sid = 0
   @accept = {}
+  @sid = 0
+  @start = "0"
   @transitions = {}
 
   if pattern?
@@ -283,17 +269,17 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
   for state in states
     cache[state] = ""
 
-  while states.length > 0
-    state = states.shift()
-
+  process_state = (state) ->
     console.log new Array(40).join("=") if debug
     console.log "looking at", chalk.red(state) if debug
 
     patterns = []
 
     for input of nfa.transitions[state]
-      continue if input.length != 1
-      console.log "considering", {input} if debug
+      if input.length != 1 and input != ""
+        continue
+
+      console.log "considering", {input, patterns} if debug
 
       for to_state of nfa.transitions[state][input]
         # ignore self transitions for the moment since we only
@@ -301,32 +287,36 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
         if to_state == state
           continue
 
+        console.log {to_state}, "cache =", cache[to_state] if debug
+
         if not cache[to_state]
-          throw new Error("no cache for to_state: #{to_state}")
+          # to_state hasn't been processed yet. add it to the stack and then retry this state
+          console.log "to_state", to_state, "not in cache yet, retrying" if debug
+          states.push(to_state) unless to_state in states
+          states.push(state)
+          return
+          # if to_state in states
+            # this state must not have been processed, move this state to the end of the queue
+          #   console.log "no cache entry for #{to_state}, trying to delay #{state}"
+          #   return states.push(state)
+          # else
+          #   throw new Error("no cache entry for #{to_state} and one is not being processed")
+
         for pat in cache[to_state]
-          patterns.push input + pat
+          new_pat = input + pat
+          patterns.push(new_pat) unless new_pat in patterns
 
     if patterns.length > 1 and match_brackets
       # we just got multiple patterns. find the nearest parent state for both
       # and use the {x,y} syntax to compress the pattern.
       console.log chalk.yellow("this has multiple patterns"), patterns if debug
 
-      rest = {}
+      suffix = findSuffix(patterns)
 
-      sub_patterns = patterns.map (pat) ->
-        sub = splitBrackets(pat, -1)
-        rest[pat.substring(sub.closing_offset+1)] = true
-        return sub[0]
+      console.log {suffix} if debug
 
-      rest = Object.keys(rest)
-
-      # in case the ends are mismatched, assume that this glob doesn't have a compact
-      # representation and retry without adding brackets
-      if rest.length > 1
-        throw REST_MISMATCH
-
-      patterns.splice(0)
-      patterns[0] = "{" + sub_patterns.join(",") + "}" + rest
+      sub_patterns = patterns.map (pat) -> pat.substring(0, pat.length - suffix.length)
+      patterns = [ "{" + sub_patterns.join(",") + "}" + suffix ]
 
     if patterns.length == 0
       patterns.push("")
@@ -337,17 +327,26 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
 
     console.log "after processing", {state, patterns} if debug
 
-    if inverse[state] and match_brackets
-      if hasMultipleTransitionsTo(nfa, state, inverse)
-        console.log chalk.yellow("state has multiple incoming"), Object.keys(inverse[state]) if debug
-        patterns[0] = "}" + patterns[0]
+    # if inverse[state] and match_brackets
+    #   if hasMultipleTransitionsTo(nfa, state, inverse)
+    #     console.log chalk.yellow("state has multiple incoming"), Object.keys(inverse[state]) if debug
+    #     patterns[0] = "}" + patterns[0]
 
+    console.log "saving cache for #{state}", patterns if debug
     cache[state] = patterns
 
     for from_state of inverse[state]
       states.push(from_state) unless (from_state in states) or from_state == state
 
-  final = cache["0:0"]
+
+  while states.length > 0
+    state = states.shift()
+    process_state(state)
+
+  final = cache[nfa.start]
+
+  if not final?
+    throw new Error("missing cache for start state")
 
   if final.length > 1
     "{" + final.join(",") + "}"
@@ -379,6 +378,16 @@ toGlob = (nfa) ->
 
   return result
 
+addEpsilonTransitions = (nfa, i, j, a_eps, b_eps) ->
+  if a_eps
+    for to_state of a_eps
+      addTransition(nfa, "#{i}:#{j}", "", "#{to_state}:#{j}")
+
+  if b_eps
+    for to_state of b_eps
+      addTransition(nfa, "#{i}:#{j}", "", "#{i}:#{to_state}")
+
+
 intersect = (anfa, bnfa) ->
   console.log "intersecting" if debug
   console.log util.inspect(anfa, false, null) if debug
@@ -389,39 +398,45 @@ intersect = (anfa, bnfa) ->
   for i in [0..anfa.sid]
     for j in [0..bnfa.sid]
 
-      console.log "constructing #{i}:#{j}" if debug
+      console.log chalk.cyan("processing: #{i}:#{j}") if debug
 
       # if one of the states has an ε transition, allow the nfa to transition between the compund states
-      if (a_eps = anfa.transitions[i]?[""]) or (b_eps = bnfa.transitions[j]?[""])
-        console.log {a_eps, b_eps} if debug
-        if a_eps and not b_eps
-          for to_state of a_eps
-            addTransition(nfa, "#{i}:#{j}", "", "#{to_state}:#{j}")
-        else if not a_eps and b_eps
-          for to_state of b_eps
-            addTransition(nfa, "#{i}:#{j}", "", "#{j}:#{to_state}")
+      addEpsilonTransitions(nfa, i, j, anfa.transitions[i]?[""], bnfa.transitions[j]?[""])
 
       for [a_input, b_input, ab_input] in matchTransitions(anfa.transitions[i], bnfa.transitions[j])
+        console.log chalk.cyan("matched #{a_input} and #{b_input} as #{ab_input}") if debug
         for [a, b] in stateProduct(anfa.transitions[i][a_input], bnfa.transitions[j][b_input])
+          console.log chalk.cyan("adding transition from #{i}:#{j} with '#{ab_input}' to #{a}:#{b}") if debug
           addTransition(nfa, "#{i}:#{j}", ab_input, "#{a}:#{b}")
 
   for a of anfa.accept
     for b of bnfa.accept
       nfa.accept["#{a}:#{b}"] = true
 
+  nfa.start = "0:0"
+
   console.log util.inspect(nfa, false, null) if debug
 
-  # list all states reachable from 0:0
-  forward = reachFrom(nfa, "0:0")
+  # list all states reachable from the start
+  forward = reachFrom(nfa, nfa.start)
+
+  console.log "foward", forward if debug
+
+  # remove final states not accesible from the start
+  for state of nfa.accept
+    if not forward[state]
+      delete nfa.accept[state]
 
   # if we can't reach any accept states, there's no intersection
   if not common(nfa.accept, forward)
+    console.log "there are no accept states reachable from start" if debug
     return false
 
   # same for states reachable backwards from any accept states
   backward = reachAccept(nfa)
 
-  if not backward["0:0"]
+  if not backward[nfa.start]
+    console.log "start state cannot be reached from any acept states" if debug
     return false
 
   eachTransition nfa, (state, input, to_state) ->
@@ -433,7 +448,8 @@ intersect = (anfa, bnfa) ->
 
   console.log util.inspect(nfa, false, null) if debug
 
-  mergeEpsStates(nfa)
+  # mergeEpsStates(nfa)
+  # assertNoEpsStates(nfa)
 
   return nfa
 
@@ -443,7 +459,7 @@ module.exports = (apat, bpat) ->
   bnfa = new NFA(bpat)
   nfa = intersect(anfa, bnfa)
 
-  console.log util.inspect(nfa, false, null) if debug
+  console.log chalk.green("intersection"), util.inspect(nfa, false, null) if debug
 
   if nfa
     return toGlob(nfa)

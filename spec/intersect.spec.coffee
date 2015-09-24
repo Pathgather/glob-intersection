@@ -1,6 +1,8 @@
 m = require("../index")
 
 tests = [
+
+  # basic patterns
   ["", "", ""]
   ["", "*", ""]
   ["a", "", false]
@@ -19,9 +21,19 @@ tests = [
   ["a*b", "a*", "a*b"]
   ["a*b", "ab", "ab"]
 
-  ["{a,b}", "a", "a"]
+  # bracket patterns
+  ["{a,b,c}", "a", "a"]
+  ["{a,}", "a", "a"]
+  ["{,a}", "a", "a"]
+  ["{,a}", "", ""]
+  ["{a}", "a", "a"]
   ["{a,b}", "*", "{a,b}"]
+  ["x{a,b}", "*", "x{a,b}"]
+  ["{a,b}yy", "*", "{a,b}yy"]
   ["{a,b}", "{b,c}", "b"]
+  ["{a,b}", "{c,d}", false]
+  ["{a,b,c}", "{y,a,x,c}", "{a,c}"]
+  ["{xaa,yaa,yawn}", "{x,y}*a", "{x,y}aa"]
 ]
 
 describe "glob-intersect", ->

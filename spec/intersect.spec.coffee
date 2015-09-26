@@ -56,7 +56,60 @@ tests = [
   ["**", "*", "*"]
   ["**", "/a", "/a"]
   ["**", "/a/*/c/*/e", "/a/*/c/*/e"]
+
   ["/hello/**/*.js", "/hello/world/*", "/hello/world/*.js"]
+  ["/hello/**", "/**/*.js", "/hello/**/*.js"]
+  ["/hello/**", "**/*.js", "/hello/**/*.js"]
+
+  ["/**/*.js", "hello.js", false]
+  ["/**/*.js", "/hello.js", "/hello.js"]
+  ["**/*.js", "hello.js", "hello.js"]
+  ["**/*.js", "/hello.js", "/hello.js"]
+  ["**.js", "hello.js", "hello.js"]
+  ["**.js", "/hello.js", "/hello.js"]
+  ["/**.js", "hello.js", false]
+  ["/**.js", "/hello.js", "/hello.js"] # not a compatible intersection
+  ["/**", "**", "/**"]
+  ["/**", "*", false]
+  ["**/", "*", false]
+
+  # Copyright (c) 2014-2015, Jon Schlinkert. From https://github.com/jonschlinkert/micromatch
+  ['**/*.js', 'a/b/c/z.js', 'a/b/c/z.js']
+  ['**/*.js', 'a/b/z.js', 'a/b/z.js']
+  ['**/*.js', 'a/z.js', 'a/z.js']
+  ['**/*.js', 'z.js', 'z.js']
+  ['**/z*', 'z.js', 'z.js']
+
+  ['a/b/**/*.js', 'a/b/c/d/e/z.js', 'a/b/c/d/e/z.js']
+  ['a/b/**/*.js', 'a/b/c/d/z.js', 'a/b/c/d/z.js']
+  ['a/b/c/**/*.js', 'a/b/c/z.js', 'a/b/c/z.js']
+  ['a/b/c**/*.js', 'a/b/c/z.js', 'a/b/c/z.js']
+  ['a/b/**/*.js', 'a/b/c/z.js', 'a/b/c/z.js']
+  ['a/b/**/*.js', 'a/b/z.js', 'a/b/z.js']
+
+  ['a/b/**/*.js', 'a/z.js', false]
+  ['a/b/**/*.js', 'z.js', false]
+
+  ['**/z*.js', 'z.js', 'z.js']
+  ['a/b-*/**/z.js', 'a/b-c/z.js', 'a/b-c/z.js']
+  ['a/b-*/**/z.js', 'a/b-c/d/e/z.js', 'a/b-c/d/e/z.js']
+
+  ['**', 'a/b/c/d', 'a/b/c/d']
+  ['**', 'a/b/c/d/', 'a/b/c/d/']
+  ['**/**', 'a/b/c/d/', 'a/b/c/d/']
+  ['**/b/**', 'a/b/c/d/', 'a/b/c/d/']
+  ['a/b/**', 'a/b/c/d/', 'a/b/c/d/']
+  ['a/b/**/', 'a/b/c/d/', 'a/b/c/d/']
+  ['a/b/**/c/**/', 'a/b/c/d/', 'a/b/c/d/']
+  ['a/b/**/c/**/d/', 'a/b/c/d/', 'a/b/c/d/']
+  ['a/b/**/f', 'a/b/c/d/', false]
+  ['a/b/**/**/*.*', 'a/b/c/d/e.f', 'a/b/c/d/e.f']
+  ['a/b/**/*.*', 'a/b/c/d/e.f', 'a/b/c/d/e.f']
+  ['a/b/**/c/**/d/*.*', 'a/b/c/d/e.f', 'a/b/c/d/e.f']
+  ['a/b/**/d/**/*.*', 'a/b/c/d/e.f', 'a/b/c/d/e.f']
+  ['a/b/**/d/**/*.*', 'a/b/c/d/g/e.f', 'a/b/c/d/g/e.f']
+  ['a/b/**/d/**/*.*', 'a/b/c/d/g/g/e.f', 'a/b/c/d/g/g/e.f']
+  # /Copyright
 
   # {} patterns
   ["{a,b,c}", "a", "a"]
@@ -90,7 +143,6 @@ describe "glob-intersect", ->
       it "('#{entry[0]}', '#{entry[1]}')", ->
         expect(m(entry[0], entry[1], {debug})).toBe(entry[2])
         expect(m(entry[1], entry[0])).toBe(entry[2])
-
 
   for entry in brace_tests
     do (entry) ->

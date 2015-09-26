@@ -8,9 +8,11 @@ matchInput = (a, b) ->
   switch
     when a == b and a != ""
       a
-    when a == "**" and b == ".*"
+    when a == "**/" and b == "**"
+      a
+    when a == "**/" and b.length == 1
       b
-    when a == "**" and b.length == 1
+    when a == "**" and (b == ".*" or b.length == 1)
       b
     when a == ".*" and b.length == 1 and b != "/"
       b
@@ -109,16 +111,20 @@ compileFragment = (nfa, pattern, curr = null) ->
         i = split_patterns.closing_offset
 
       when "*"
-        next = nfa.sid++
-
         # check if this is a globstar
         if pattern[i+1] == "*"
-          addTransition(nfa, curr, "**", curr)
-          i++
+
+          # check if we can consume the next / as well, but only if it's not the last character
+          if pattern[i+2] == "/" and pattern[i+3] != undefined
+            addTransition(nfa, curr, "**/", curr)
+            i += 2
+          else
+            addTransition(nfa, curr, "**", curr)
+            i++
         else
           addTransition(nfa, curr, ".*", curr)
 
-        addTransition(nfa, curr, "", next)
+        next = curr
 
       when "?"
         next = nfa.sid++
@@ -129,7 +135,7 @@ compileFragment = (nfa, pattern, curr = null) ->
         next = nfa.sid++
         addTransition(nfa, curr, ch, next)
 
-    if next
+    if next?
       curr = next
     else
       curr = nfa.sid++
@@ -186,11 +192,6 @@ reachAccept = (nfa) ->
         states.push(from_state) unless visited[from_state]
 
   visited
-
-assertNoEpsStates = (nfa) ->
-  eachTransition nfa, (from, input, to) ->
-    if input == ""
-      throw new Error("assertion failed: nfa has epsilon states")
 
 stateProduct = (a_states, b_states) ->
   states = []
@@ -259,9 +260,6 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     patterns = []
 
     for input of nfa.transitions[state]
-      if input.length != 1 and input != "" and input != ".*"
-        continue
-
       console.log "considering", {input, patterns} if debug
 
       for to_state of nfa.transitions[state][input]
@@ -308,7 +306,18 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
 
     if nfa.transitions[state]?[".*"]?[state]
       console.log "self * transition" if debug
-      patterns = patterns.map (pat) -> "*" + pat
+      patterns = patterns.map (pat) ->
+        if pat[0] == "*" then pat else "*" + pat
+
+    if nfa.transitions[state]?["**/"]?[state]
+      console.log "self **/ transition" if debug
+      patterns = patterns.map (pat) ->
+        if pat.substring(0,3) == "**/" then pat else "**/" + pat
+
+    else if nfa.transitions[state]?["**"]?[state]
+      console.log "self ** transition" if debug
+      patterns = patterns.map (pat) ->
+        if pat.substring(0,2) == "**" then pat else "**" + pat
 
     console.log "saving cache for #{state}", patterns if debug
     cache[state] = patterns

@@ -13,6 +13,8 @@
         return a;
       case !(a === "**/" && b === "**"):
         return a;
+      case !(a === "**/" && b === ".*"):
+        return b;
       case !(a === "**/" && b.length === 1):
         return b;
       case !(a === "**" && (b === ".*" || b.length === 1)):

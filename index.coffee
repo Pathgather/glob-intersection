@@ -10,6 +10,8 @@ matchInput = (a, b) ->
       a
     when a == "**/" and b == "**"
       a
+    when a == "**/" and b == ".*"
+      b
     when a == "**/" and b.length == 1
       b
     when a == "**" and (b == ".*" or b.length == 1)

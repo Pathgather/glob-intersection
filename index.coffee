@@ -8,6 +8,10 @@ matchInput = (a, b) ->
   switch
     when a == b and a != ""
       a
+    when a == "**/*" and b == "**"
+      a
+    when a == "**/*"
+      b
     when a == "**/" and b == "**"
       a
     when a == "**/" and b == ".*"
@@ -80,19 +84,36 @@ common = (obj_a, obj_b) ->
       return true
   return false
 
+# shallow-clone the object
+clone = (obj) ->
+  _obj = {}
+  for k,v of obj
+    _obj[k] = v
+  return _obj
+
+# shallow flatten the array
+flatten = (arr) ->
+  return [].concat.apply([], arr)
+
 removeTransition = (nfa, from, input, to) ->
   delete nfa.transitions[from][input][to]
   delete nfa.transitions[from][input] if empty(nfa.transitions[from][input])
   delete nfa.transitions[from] if empty(nfa.transitions[from])
 
 # compile fragment by adding transitions to nfa, return last state
-compileFragment = (nfa, pattern, curr = null) ->
+compileFragment = (nfa, pattern, curr = null, offset) ->
 
   if not curr?
     curr = nfa.sid++
 
   i = 0
+
+  logOffset = (input) ->
+    if nfa.offsets
+      nfa.offsets.push(input: input, state: curr, offset: offset + i)
+
   while i < pattern.length
+
     ch = pattern[i]
     next = null
 
@@ -101,8 +122,12 @@ compileFragment = (nfa, pattern, curr = null) ->
         # find closing }, split on ",", compile fragments
         split_patterns = splitBrackets(pattern, i)
 
+        bracket_offset = 1 # the { bracket
+
         last = for _pattern in split_patterns
-          compileFragment(nfa, _pattern, curr)
+          _last = compileFragment(nfa, _pattern, curr, offset + i + bracket_offset)
+          bracket_offset += _pattern.length + 1 # add length of the pattern + a ,
+          _last
 
         next = nfa.sid++
 
@@ -118,19 +143,32 @@ compileFragment = (nfa, pattern, curr = null) ->
 
           # check if we can consume the next / as well, but only if it's not the last character
           if pattern[i+2] == "/" and pattern[i+3] != undefined
-            addTransition(nfa, curr, "**/", curr)
-            i += 2
+
+            # special case **/*
+            if pattern[i+3] == "*"
+              addTransition(nfa, curr, "**/*", curr)
+              logOffset("**/*")
+              i += 3
+            else
+              addTransition(nfa, curr, "**/", curr)
+              logOffset("**/")
+              i += 2
+
           else
             addTransition(nfa, curr, "**", curr)
+            logOffset("**")
             i++
+
         else
           addTransition(nfa, curr, ".*", curr)
+          logOffset(".*")
 
-        next = curr
+        next = curr unless next?
 
       when "?"
         next = nfa.sid++
         addTransition(nfa, curr, ".*", next)
+        logOffset(".*")
 
       else
         # it's a literal character
@@ -195,6 +233,10 @@ reachAccept = (nfa) ->
 
   visited
 
+# test if the nfa has a state in transitions or accept
+hasState = (nfa, state) ->
+  state of nfa.transitions or state of nfa.accept
+
 stateProduct = (a_states, b_states) ->
   states = []
 
@@ -233,14 +275,19 @@ findSuffix = (patterns) ->
 
   return first.substring(first.length - i)
 
-NFA = (pattern) ->
+NFA = (pattern, options) ->
   @accept = {}
   @sid = 0
   @start = "0"
   @transitions = {}
 
+  # if we're going to record captures, create an array to describe
+  # all wildcards, their states and offsets in the pattern
+  if options?.capture
+    @offsets = []
+
   if pattern?
-    last = compileFragment(@, pattern)
+    last = compileFragment(@, pattern, null, 0)
     @accept[last] = true
 
   return
@@ -306,20 +353,25 @@ to_glob_helper = (nfa, inverse, match_brackets = true) ->
     if patterns.length == 0
       patterns.push("")
 
-    if nfa.transitions[state]?[".*"]?[state]
-      console.log "self * transition" if debug
+    if nfa.transitions[state]?["**/*"]?[state]
+      console.log "self **/* transition" if debug
       patterns = patterns.map (pat) ->
-        if pat[0] == "*" then pat else "*" + pat
+        if pat.substring(0,4) == "**/*" then pat else "**/*" + pat
+    else
+      if nfa.transitions[state]?[".*"]?[state]
+        console.log "self * transition" if debug
+        patterns = patterns.map (pat) ->
+          if pat[0] == "*" then pat else "*" + pat
 
-    if nfa.transitions[state]?["**/"]?[state]
-      console.log "self **/ transition" if debug
-      patterns = patterns.map (pat) ->
-        if pat.substring(0,3) == "**/" then pat else "**/" + pat
+      if nfa.transitions[state]?["**/"]?[state]
+        console.log "self **/ transition" if debug
+        patterns = patterns.map (pat) ->
+          if pat.substring(0,3) == "**/" then pat else "**/" + pat
 
-    else if nfa.transitions[state]?["**"]?[state]
-      console.log "self ** transition" if debug
-      patterns = patterns.map (pat) ->
-        if pat.substring(0,2) == "**" then pat else "**" + pat
+      else if nfa.transitions[state]?["**"]?[state]
+        console.log "self ** transition" if debug
+        patterns = patterns.map (pat) ->
+          if pat.substring(0,2) == "**" then pat else "**" + pat
 
     console.log "saving cache for #{state}", patterns if debug
     cache[state] = patterns
@@ -376,13 +428,68 @@ addEpsilonTransitions = (nfa, i, j, a_eps, b_eps) ->
     for to_state of b_eps
       addTransition(nfa, "#{i}:#{j}", "", "#{i}:#{to_state}")
 
+# convert input like .* to the pattern representation -> *
+inputToPattern = (input) ->
+  switch input
+    when ".*"
+      "*"
+    else
+      input
 
-intersect = (anfa, bnfa) ->
+# split path into directory and base components
+# similar to [path.dirname, path.basename], but preserve trailing / in dirname and
+# also return empty string when no directory instead of returning "."
+dirBaseSplit = (path) ->
+  last = path.lastIndexOf("/")
+  if last == -1
+    return ["", path]
+  else
+    return [path.substring(0,last+1), path.substring(last+1)]
+
+# given the final nfa, offsets for all globs in the first pattern and capturing transitions
+# return an array of captured segments in their source order
+extractCaptures = (nfa, anfa, captures) ->
+  console.log "extracting captures\n", captures, anfa.offsets if debug
+
+  # create an index of capturing globs found in the first pattern indexed by state-input
+  globs = {}
+  for glob in anfa.offsets
+    glob = clone(glob)
+    globs[glob.state + "/" + glob.input] = glob
+    glob.captured = []
+
+  for capture in captures
+    # check if the transition is still alive in the NFA, if so, add to the corresponding glob above
+    if hasState(nfa, capture.state) and hasState(nfa, capture.to_state)
+      console.log "capture alive", capture.captured if debug
+
+      [i,j] = capture.state.split(":")
+
+      if glob = globs[i + "/" + capture.input]
+        glob.captured.push(capture.captured)
+
+  final_captures = []
+  for key, glob of globs
+    final_captures.push(offset: glob.offset, capture: glob.captured.map(inputToPattern).join(""), input: glob.input)
+
+  final_captures = final_captures.sort((a,b) -> a.offset - b.offset).map (glob) ->
+    # split **/* captures into two, one for the ** part, the other for *
+    if glob.input == "**/*"
+      return dirBaseSplit(glob.capture)
+    else
+      return glob.capture
+
+  return flatten(final_captures)
+
+intersectNFAs = (anfa, bnfa, options) ->
   console.log "intersecting" if debug
   console.log util.inspect(anfa, false, null) if debug
   console.log util.inspect(bnfa, false, null) if debug
 
   nfa = new NFA()
+
+  if options?.capture
+    capture = options?.capture
 
   for i in [0..anfa.sid]
     for j in [0..bnfa.sid]
@@ -394,8 +501,13 @@ intersect = (anfa, bnfa) ->
 
       for [a_input, b_input, ab_input] in matchTransitions(anfa.transitions[i], bnfa.transitions[j])
         console.log "matched #{a_input} and #{b_input} as #{ab_input}" if debug
+
         for [a, b] in stateProduct(anfa.transitions[i][a_input], bnfa.transitions[j][b_input])
           console.log "adding transition from #{i}:#{j} with '#{ab_input}' to #{a}:#{b}" if debug
+
+          if capture and a_input in [".*", "**", "**/", "**/*"]
+            capture.push(input: a_input, state: "#{i}:#{j}", to_state: "#{a}:#{b}", captured: b_input)
+
           addTransition(nfa, "#{i}:#{j}", ab_input, "#{a}:#{b}")
 
   for a of anfa.accept
@@ -439,20 +551,30 @@ intersect = (anfa, bnfa) ->
 
   return nfa
 
-module.exports = (apat, bpat, options = {}) ->
+intersect = (apat, bpat, options = {}) ->
 
   if options.debug
     debug = true
 
+  if options.capture
+    if typeof options.capture != "function"
+      throw new Error("glob-intersect: capture option should be a function, was '#{typeof options.capture}'")
+
+    capture = []
+
   try
 
-    anfa = new NFA(apat)
-    bnfa = new NFA(bpat)
-    nfa = intersect(anfa, bnfa)
+    anfa = new NFA(apat, {capture})
+    bnfa = new NFA(bpat, {capture})
+    nfa = intersectNFAs(anfa, bnfa, {capture})
 
     console.log "intersection", util.inspect(nfa, false, null) if debug
 
-    glob = toGlob(nfa) if nfa
+    if nfa
+      glob = toGlob(nfa)
+
+      if capture
+        options.capture(extractCaptures(nfa, anfa, capture)...)
 
   finally
     debug = false
@@ -461,3 +583,5 @@ module.exports = (apat, bpat, options = {}) ->
     return glob
   else
     return false
+
+module.exports = intersect

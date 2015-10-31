@@ -140,15 +140,71 @@ brace_tests = [
   ["*a*b*", "*c*d*", ["*a*b*c*d*","*a*c*b*d*","*a*c*d*b*","*c*a*b*d*","*c*a*d*b*","*c*d*a*b*"]]
 ]
 
-describe "glob-intersect", ->
-  for entry in tests
-    do (entry) ->
-      it "('#{entry[0]}', '#{entry[1]}')", ->
-        expect(m(entry[0], entry[1], {debug})).toBe(entry[2])
-        expect(m(entry[1], entry[0])).toBe(entry[2])
+capture_tests = [
+  ["**/*.js", "b.js", ["", "b"]]
+  ["**/*.js", "/b.js", ["/", "b"]]
+  ["**/*.js", "a/b.js", ["a/", "b"]]
+  ["**/*.js", "a/b/c.js", ["a/b/", "c"]]
 
-  for entry in brace_tests
-    do (entry) ->
-      it "('#{entry[0]}', '#{entry[1]}')", ->
-        expect(braces(m(entry[0], entry[1], {debug}))).toMatchArray(entry[2])
-        expect(braces(m(entry[1], entry[0]))).toMatchArray(entry[2])
+  ["**/*.coffee", "/src/*", ["/src/", "*"]]
+  ["**/*.coffee", "/src/**/*", ["/src/**/", "*"]]
+
+  ["a*b", "aa*bb", ["a*b"]]
+  ["a*b", "aa/bb", false]
+  ["**ab", "abab", ["ab"]]
+  ["**ab", "/ab/ab", ["/ab/"]]
+  ["**/", "ab", false]
+  ["**/", "*", false]
+  ["**/", "ab/", ["ab"]]
+  ["**", "*", ["*"]]
+
+  ["??", "ab", ["a", "b"]]
+  ["?", "*", ["*"]]
+
+  # some of the weirder cases.
+  ["?", "*", ["*"]]
+  ["?", "*a", ["a"]]
+  ["?", "**/*", ["**/*"]]
+  ["*", "*", ["*"]]
+  ["*", "**", ["**"]]
+  ["*", "**/", false]
+  ["*", "**/*", ["**/*"]]
+  ["**/*", "**/*", ["**/", "*"]]
+
+  # buggy!
+  ["*/*", "**/*", ["**/*","**/*"]]
+]
+
+describe "glob-intersect", ->
+  describe "patterns", ->
+    for entry in tests
+      do (entry) ->
+        it "('#{entry[0]}', '#{entry[1]}')", ->
+          expect(m(entry[0], entry[1], {debug})).toBe(entry[2])
+          expect(m(entry[1], entry[0])).toBe(entry[2])
+
+  describe "expanded braces", ->
+    for entry in brace_tests
+      do (entry) ->
+        it "('#{entry[0]}', '#{entry[1]}')", ->
+          expect(braces(m(entry[0], entry[1], {debug}))).toMatchArray(entry[2])
+          expect(braces(m(entry[1], entry[0]))).toMatchArray(entry[2])
+
+  describe "capture", ->
+    capture = null
+    beforeEach ->
+      capture = jasmine.createSpy("capture callback")
+
+    for entry in capture_tests
+      do (entry) ->
+        it "('#{entry[0]}', '#{entry[1]}', capture: ...)", ->
+          m(entry[0], entry[1], {debug, capture})
+          if entry[2]
+            expect(capture).toHaveBeenCalledWith(entry[2]...)
+          else
+            expect(capture).not.toHaveBeenCalled()
+
+    it "should work with array.push as argument", ->
+      captured = []
+      m("**/*", "hello/cruel/world", capture: [].push.bind(captured))
+      expect(captured).toEqual(["hello/cruel/", "world"])
